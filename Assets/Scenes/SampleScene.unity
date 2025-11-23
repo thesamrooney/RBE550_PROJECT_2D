@@ -145,22 +145,22 @@ MonoBehaviour:
   m_GameObject: {fileID: 122483934}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 15cca8be51c782fd4acad23043573551, type: 3}
+  m_Script: {fileID: 11500000, guid: f2e07aba49f5f217e810434ea9faeb28, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RRTstarScript
   tilemap: {fileID: 1143683473}
   workspace:
     serializedVersion: 2
-    x: -22
-    y: -26
-    width: 66
-    height: 50
-  startPos: {x: 0.62, y: 2.82}
-  goalPos: {x: -9.5, y: 0.29}
-  goalRadius: 0.68
-  stepSize: 0.75
+    x: 6.83
+    y: -5.25
+    width: -19.9
+    height: 10.62
+  startPos: {x: -4.6, y: -3.13}
+  goalPos: {x: 0.79, y: 3.58}
+  goalRadius: 0.5
+  stepSize: 0.1
   neighborRadius: 1.5
-  maxIterations: 5000
+  maxIterations: 2000
   goalBias: 0.1
   obstacleMask:
     serializedVersion: 2

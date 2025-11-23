@@ -46,16 +46,23 @@ public class RRTScript : MonoBehaviour {
     List<Vector2> bestPath = new List<Vector2>();
     bool found = false;
 
+    Node bestGoalNode;
+    float bestGoalCost = Mathf.Infinity;
+
     // game objects
     GameObject agent, goal;
     Rigidbody2D agent_body;
     int pathIndex;
+
+    private GoalProxCostMap proxCostMap;
 
     System.Random rng = new System.Random();
     double randomValue() => rng.NextDouble();
 
     void Start() {
         resetPlanner();
+        proxCostMap = new GoalProxCostMap(tilemap, obstacleMask, goalPos);
+
 
         // spawn agent and rigid body stuff
         agent = Instantiate(agentSprite, startPos, Quaternion.identity);
@@ -80,14 +87,21 @@ public class RRTScript : MonoBehaviour {
             }
         }
 
+                
         // moves agent if best path found and
         if (found && bestPath.Count > 1)
             moveAgent();
+
+        if (!found && tree.Count >= maxIterations && bestGoalNode != null){
+            bestPath = gatherPath(bestGoalNode);
+            found = true;
+        }
+
     }
 
-//
-// Planner stuff --------
-//
+    //
+    // Planner stuff --------
+    //
 
     // resets plannner/flags and new tree
     void resetPlanner() {
@@ -96,6 +110,10 @@ public class RRTScript : MonoBehaviour {
         found = false;
         pathIndex = 0;
         tree.Add(new Node(startPos, null, 0f));
+
+        bestGoalNode = null;
+        bestGoalCost = Mathf.Infinity;
+
     }
 
     // performs rrt step
@@ -120,15 +138,24 @@ public class RRTScript : MonoBehaviour {
         if(collidesAlong(nearestNode.pos, newPoint)) 
             return;
 
+        float goalCost = proxCostMap.getProxCost(newPoint);
+        // if(isInfinity(goalCost)) return;
+        float proxWeight = 100f;
+
         // adds new closest node to tree
         float newCost = nearestNode.cost + Vector2.Distance(nearestNode.pos, newPoint);
+        newCost += proxWeight * goalCost;
+
         Node newNode = new Node(newPoint, nearestNode, newCost);
         tree.Add(newNode);
 
         // checks if reached goal
-        if (Vector2.Distance(newNode.pos, goalPos) <= goalRadius){
-            bestPath = gatherPath(newNode);
-            found = true;
+        if (Vector2.Distance(newNode.pos, goalPos) <= goalRadius && newNode.cost < bestGoalCost){
+            bestGoalCost = newNode.cost;
+            bestGoalNode = newNode;
+
+            // bestPath = gatherPath(newNode);
+            // found = true;
         }
     }
 
@@ -150,9 +177,9 @@ public class RRTScript : MonoBehaviour {
         agent_body.MovePosition(pos + vel * Time.deltaTime);
     }
 
-//
-// Helpers --------
-//
+    //
+    // Helpers --------
+    //
 
     // pick random point within workspace
     Vector2 samplePoint(){
@@ -178,17 +205,19 @@ public class RRTScript : MonoBehaviour {
         return best;
     }
 
-    // // finds all nodes within a given radius of a point, used in RRT*
-    // List<Node> findNeighbors(Vector2 pos, float radius){
-    //     float r2 = radius * radius;
-    //     var list = new List<Node>();
-        
-    //     foreach (var node in tree)
-    //         if ((node.pos - pos).sqrMagnitude <= r2) 
-    //             list.Add(node);
-        
-    //     return list;
-    // }
+    /**
+        // finds all nodes within a given radius of a point, used in RRT*
+        List<Node> findNeighbors(Vector2 pos, float radius){
+            float r2 = radius * radius;
+            var list = new List<Node>();
+            
+            foreach (var node in tree)
+                if ((node.pos - pos).sqrMagnitude <= r2) 
+                    list.Add(node);
+            
+            return list;
+        }
+    **/
 
     // handles stepping from different positions in RRT
     Vector2 step(Vector2 from, Vector2 to, float maxStep){
@@ -227,7 +256,7 @@ public class RRTScript : MonoBehaviour {
         return path;
     }
 
-// thanks chat lol
+    // thanks chat lol
     void OnDrawGizmos(){
         // Draw workspace bounds even in edit mode
         Gizmos.color = Color.white;
@@ -251,5 +280,136 @@ public class RRTScript : MonoBehaviour {
                 Gizmos.DrawLine(bestPath[i], bestPath[i + 1]);
         }
     }
-
 }
+
+
+public class GoalProxCostMap{
+    // fields for the inputs
+    Tilemap tilemap;
+    LayerMask obstacleMask;
+    Vector2 goal;
+
+    // fields that used to be initialized off the primary constructor params
+    BoundsInt bounds;
+    int width;
+    int height;
+
+    float[,] costMap;
+    bool[,] occupancyGrid;
+
+    // constructor: this replaces the `(Tilemap, LayerMask, Vector2)` in the class header
+    public GoalProxCostMap(Tilemap tilemap, LayerMask obstacleMask, Vector2 goal){
+        this.tilemap = tilemap;
+        this.obstacleMask = obstacleMask;
+        this.goal = goal;
+
+        bounds = tilemap.cellBounds;
+        width = bounds.size.x;
+        height = bounds.size.y;
+
+        costMap = new float[width, height];
+        occupancyGrid = new bool[width, height];
+    }
+    
+    void buildGrid() {
+        Vector3 cellSize = tilemap.layoutGrid.cellSize;
+        Vector2 size = new Vector2(cellSize.x, cellSize.y) * 0.9f;
+
+        // loop over each cell in the bounds
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int cellX = bounds.xMin + x;
+                int cellY = bounds.yMin + y;
+
+                Vector3Int cell = new Vector3Int(cellX, cellY, 0);
+                Vector3 worldCenter = tilemap.GetCellCenterWorld(cell);
+                Collider2D hit = Physics2D.OverlapBox((Vector2)worldCenter, size, 0f, obstacleMask);
+
+                if(hit == null){
+                    occupancyGrid[x, y] = false;
+                }else{
+                    occupancyGrid[x, y] = true;
+                }
+            }
+        }
+
+        Debug.Log("built grid");
+    }
+
+    float[,] genCostMap(){
+        buildGrid();
+
+        int[] dX = { 2, -2, 1, -1, 0, 0 };
+        int[] dY = { 0, 0, 1, -1, 2, -2 };
+        int numNeigh = 8;
+
+        float[,] costMap = new float[width, height];
+        bool[,] visited = new bool[width, height];
+
+        // WorldToCell takes a Vector3
+        Vector3Int cellGoal = tilemap.WorldToCell(new Vector3(goal.x, goal.y, 0f));
+        int gx = cellGoal.x - bounds.xMin;
+        int gy = cellGoal.y - bounds.yMin;
+        int totalCells = width * height;
+
+        // init distances and visited to infinity/false
+        for (int x = 0; x < width; x++) {
+            for (int y = 0; y < height; y++) {
+                costMap[x,y] = float.PositiveInfinity;
+                visited[x,y] = false;
+            }
+        }
+
+        // was 'dist[gx, gy]' (undefined); you clearly meant costMap
+        costMap[gx, gy] = 0f;
+
+        // main Dijkstra loop 
+        for (int step = 0; step < totalCells; step++){
+            // find unvisited cell with smallest dist
+            float bestDist = float.PositiveInfinity;
+            int bestX = -1;
+            int bestY = -1;
+
+            for (int x = 0; x < width; x++){
+                for (int y = 0; y < height; y++){
+                    if (!visited[x, y] && costMap[x,y] < bestDist){
+                        bestDist = costMap[x, y];
+                        bestX = x;
+                        bestY = y;
+                    }
+                }
+            }
+
+            if (bestX == -1) break; // no more reachable cells
+
+            visited[bestX, bestY] = true;
+
+            // relax neighbors
+            for (int k = 0; k < numNeigh; k++){
+                int new_x = bestX + dX[k];  // was 'dx'
+                int new_y = bestY + dY[k];  // was 'dy'
+
+                // if out of bounds or cell is occupied (leaves occupied cell cost at inf)
+                if (new_x < 0 || new_x >= width || new_y < 0 || new_y >= height || occupancyGrid[new_x, new_y])
+                    continue;
+
+                float newDist = costMap[bestX, bestY] + 1f; // uniform cost
+
+                if (newDist < costMap[new_x, new_y])
+                    costMap[new_x, new_y] = newDist;
+            }
+        }
+
+        return costMap;
+    }
+        
+    public float getProxCost(Vector2 worldPos){
+        Vector3Int cell = tilemap.WorldToCell(worldPos);
+        int x = cell.x - bounds.xMin;
+        int y = cell.y - bounds.yMin;
+
+        return costMap[x, y];
+    }
+}
+
+
